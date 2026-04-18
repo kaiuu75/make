@@ -1,0 +1,119 @@
+# ---------------------------------------------------------------------------
+# Config tuned for the MI300X droplet
+#   1 × MI300X (192 GB HBM, bfloat16-native), 240 vCPU, 5 TB scratch NVMe.
+# Any value of "null" asks the runtime to autoscale from hardware detection.
+# ---------------------------------------------------------------------------
+
+data:
+  root: data/makeathon-challenge
+  s1_subdir: sentinel-1
+  s2_subdir: sentinel-2
+  aef_subdir: aef-embeddings
+  labels_subdir: labels/train
+  metadata_subdir: metadata
+  train_tiles_geojson: data/makeathon-challenge/metadata/train_tiles.geojson
+  test_tiles_geojson:  data/makeathon-challenge/metadata/test_tiles.geojson
+
+time:
+  min_date: "2020-01-01"
+  max_date: "2026-12-31"
+
+# Month calendar used by the deep month-of-change head.
+month_calendar:
+  start: "2020-01"
+  months: 72  # covers 2020-01 through 2025-12
+
+label_fusion:
+  scores:
+    radd_low:     0.60
+    radd_high:    1.00
+    gladl_prob:   0.50
+    gladl_conf:   0.90
+    glads2_1:     0.25
+    glads2_2:     0.50
+    glads2_3:     0.75
+    glads2_4:     1.00
+  agreement_threshold: 0.70
+  single_threshold:    0.90
+
+forest_mask:
+  source: aef
+  ndvi_min: 0.55
+
+baseline:
+  min_area_ha: 0.5
+  morph_open_px: 3
+  morph_close_px: 5
+
+# CPU ensemble partner — runs on all available vCPUs.
+gbm:
+  n_estimators: 1200
+  learning_rate: 0.04
+  num_leaves: 127
+  min_child_samples: 400
+  feature_fraction: 0.9
+  bagging_fraction: 0.9
+  bagging_freq: 5
+  max_pos_per_tile: 120_000
+  max_neg_per_tile: 200_000
+  num_threads: null          # null -> autoscale (≈ cpu_count - 4)
+  device: cpu                # AMD/ROCm has no LightGBM GPU wheel
+  prediction_threshold: 0.55
+  min_area_ha: 0.5
+  morph_open_px: 3
+  morph_close_px: 5
+
+# GPU training schedule — all deep-specific knobs live here.
+deep:
+  device: null               # null -> autoscale
+  amp_dtype: null            # null -> bfloat16 on MI300X, fp16 on A100 etc.
+  patch_size: 256
+  overlap: 64                # inference-time sliding-window overlap
+  batch_size: null           # null -> autoscale from VRAM
+  num_workers: null
+  epochs: 40
+  lr: 3.0e-4
+  min_lr: 1.0e-5
+  weight_decay: 1.0e-4
+  warmup_steps: 500
+  grad_clip: 1.0
+  loss:
+    focal_alpha: 0.25
+    focal_gamma: 2.0
+    dice_weight: 1.0
+    month_ce_weight: 0.25
+  augment:
+    flip: true
+    rot90: true
+    rng_seed: 1337
+  val_fraction: 0.15         # leave-one-region-out where possible
+  checkpoint_dir: /mnt/scratch/deforest/checkpoints
+  cache_dir: /mnt/scratch/deforest/patches
+  cache_compression: lz4     # one of [lz4, zstd, none]
+  prediction_threshold: 0.50
+
+preprocess:
+  workers: null              # null -> cpu_count - 4
+  patch_stride: 192          # overlap = patch_size - stride
+  max_patches_per_tile: 512
+  skip_if_empty: true
+  # Skip patches where the forest mask is ≥ `forest_min_fraction` (avoid
+  # patches that are 100% non-forest and therefore trivial negatives).
+  forest_min_fraction: 0.05
+
+ensemble:
+  # Weighted average of model probabilities before thresholding.
+  weights:
+    deep: 0.70
+    gbm:  0.30
+  threshold: 0.50
+  min_area_ha: 0.5
+  morph_open_px: 2
+  morph_close_px: 5
+
+inference:
+  chunk_rows: 2048
+
+submission:
+  output_path: submissions/submission.geojson
+  include_time_step: true

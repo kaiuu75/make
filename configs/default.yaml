@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# osapiens Makeathon 2026 — default config
+# ---------------------------------------------------------------------------
+
+data:
+  root: data/makeathon-challenge
+  s1_subdir: sentinel-1
+  s2_subdir: sentinel-2
+  aef_subdir: aef-embeddings
+  labels_subdir: labels/train
+  metadata_subdir: metadata
+  train_tiles_geojson: data/makeathon-challenge/metadata/train_tiles.geojson
+  test_tiles_geojson:  data/makeathon-challenge/metadata/test_tiles.geojson
+
+# Window of deforestation events considered.
+time:
+  min_date: "2020-01-01"
+  max_date: "2026-12-31"
+
+# Confidence scores used when fusing the three weak-label sources.
+label_fusion:
+  scores:
+    radd_low:     0.60
+    radd_high:    1.00
+    gladl_prob:   0.50   # alertYY == 2
+    gladl_conf:   0.90   # alertYY == 3
+    glads2_1:     0.25
+    glads2_2:     0.50
+    glads2_3:     0.75
+    glads2_4:     1.00
+  # A pixel is called deforestation if (agreement >= 2 sources AND
+  # max_confidence >= agreement_threshold) OR (max_confidence >= single_threshold).
+  agreement_threshold: 0.70
+  single_threshold:    0.90
+
+forest_mask:
+  # Source: "aef" (default, offline) or "hansen" (requires external download).
+  source: aef
+  # NDVI threshold used when auditing the AEF forest cluster.
+  ndvi_min: 0.55
+
+baseline:
+  min_area_ha: 0.5
+  morph_open_px: 3
+  morph_close_px: 5
+
+gbm:
+  # Training hyper-parameters. Only read when --model gbm is invoked.
+  n_estimators: 800
+  learning_rate: 0.05
+  num_leaves: 63
+  min_child_samples: 200
+  feature_fraction: 0.9
+  bagging_fraction: 0.9
+  bagging_freq: 5
+  max_pos_per_tile: 20_000
+  max_neg_per_tile: 40_000
+  # Held-out tiles for validation (leave-one-region-out style).
+  val_tile_pattern: "*_test"
+  prediction_threshold: 0.55
+  min_area_ha: 0.5
+  morph_open_px: 3
+  morph_close_px: 5
+
+inference:
+  chunk_rows: 1024   # row-wise chunking for large tiles
+
+submission:
+  output_path: submissions/submission.geojson
+  include_time_step: true

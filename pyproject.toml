@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deforest"
+version = "0.1.0"
+description = "osapiens Makeathon 2026 — deforestation detection from multimodal satellite data"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "osapiens Makeathon Team" }]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+deforest = "deforest.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
