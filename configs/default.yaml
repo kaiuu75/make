@@ -1,70 +1,95 @@
-# ---------------------------------------------------------------------------
-# osapiens Makeathon 2026 — default config
-# ---------------------------------------------------------------------------
+# make2 — default config for the improved GBM pipeline.
 
 data:
-  root: data/makeathon-challenge
+  # Point at the makeathon26 download location by default. Override with an
+  # absolute path for runs on another machine.
+  root: ../makeathon26/data/makeathon-challenge
   s1_subdir: sentinel-1
   s2_subdir: sentinel-2
   aef_subdir: aef-embeddings
   labels_subdir: labels/train
-  metadata_subdir: metadata
-  train_tiles_geojson: data/makeathon-challenge/metadata/train_tiles.geojson
-  test_tiles_geojson:  data/makeathon-challenge/metadata/test_tiles.geojson
+  train_tiles_geojson: ../makeathon26/data/makeathon-challenge/metadata/train_tiles.geojson
+  test_tiles_geojson:  ../makeathon26/data/makeathon-challenge/metadata/test_tiles.geojson
 
-# Window of deforestation events considered.
 time:
   min_date: "2020-01-01"
   max_date: "2026-12-31"
 
-# Confidence scores used when fusing the three weak-label sources.
+# Confidence scores for the three weak-label sources and fusion rules.
 label_fusion:
   scores:
     radd_low:     0.60
     radd_high:    1.00
-    gladl_prob:   0.50   # alertYY == 2
-    gladl_conf:   0.90   # alertYY == 3
+    gladl_prob:   0.50
+    gladl_conf:   0.90
     glads2_1:     0.25
     glads2_2:     0.50
     glads2_3:     0.75
     glads2_4:     1.00
-  # A pixel is called deforestation if (agreement >= 2 sources AND
-  # max_confidence >= agreement_threshold) OR (max_confidence >= single_threshold).
   agreement_threshold: 0.70
   single_threshold:    0.90
+  # Pixels with max_conf in (hard_negative_max, positive_cut) are *ignored*
+  # during GBM training — neither positive nor negative. 
+  hard_negative_max: 0.20
 
 forest_mask:
-  # Source: "aef" (default, offline) or "hansen" (requires external download).
   source: aef
-  # NDVI threshold used when auditing the AEF forest cluster.
   ndvi_min: 0.55
 
-baseline:
-  min_area_ha: 0.5
-  morph_open_px: 3
-  morph_close_px: 5
-
 gbm:
-  # Training hyper-parameters. Only read when --model gbm is invoked.
-  n_estimators: 800
+  # Objective — one of "binary" or "cross_entropy" (soft labels).
+  objective: cross_entropy
+
+  # LightGBM hyper-parameters.
+  n_estimators: 2000                  # upper bound; early stopping will cut it short
+  early_stopping_rounds: 50
   learning_rate: 0.05
   num_leaves: 63
   min_child_samples: 200
   feature_fraction: 0.9
   bagging_fraction: 0.9
   bagging_freq: 5
-  max_pos_per_tile: 20_000
-  max_neg_per_tile: 40_000
-  # Held-out tiles for validation (leave-one-region-out style).
-  val_tile_pattern: "*_test"
+  seed: 1337
+
+  # Global stratified quota. Replaces the old per-tile caps.
+  total_pos: 200_000
+  total_neg: 400_000
+  confidence_strata: 4               # quartile-stratified sampling on positives
+  region_prefix_chars: 5             # e.g. "18NWG" → region id "18NWG"
+
+  # explicit class-weighting.
+  use_scale_pos_weight: true         # only applies when objective == "binary"
+  normalise_tile_weights: true       # per-tile weights normalised to unit mean
+  region_balance: true               # each region contributes equal total weight
+
+  # Validation — regex matched against tile ids. The default
+  # below holds out the single MGRS prefix "19NBD" from training. Override
+  # per experiment or run scripts/cv_gbm.py for leave-one-region-out CV.
+  val_regions: ["19NBD"]
+
+  # Postprocessing defaults. scripts/tune_postprocess.py writes
+  # tuned_postprocess.yaml which overrides these at inference time.
   prediction_threshold: 0.55
   min_area_ha: 0.5
   morph_open_px: 3
   morph_close_px: 5
 
-inference:
-  chunk_rows: 1024   # row-wise chunking for large tiles
+features:
+  # richer annual statistics.
+  s2_percentiles: [10, 90]           # in addition to median / min / slope
+  s2_intra_year_std: true
+  # When more than two AEF years are available, compute the maximum
+  # trajectory drift across all of them (not just last − base) and the
+  # year in which it peaked.
+  aef_multi_year_drift: true
+  # Same idea for the S2 signal — worst annual NDVI drop vs year_base.
+  s2_worst_drop: true
+  # Copernicus GLO-30 DEM elevation + slope (degrees). Fetched on first use
+  # and cached on disk under ``terrain_cache_dir``.
+  use_terrain: true
+  terrain_cache_dir: cache/dem
 
 submission:
-  output_path: submissions/submission.geojson
   include_time_step: true
+  # Submission default path; scripts/predict_gbm.py accepts --out to override.
+  output_path: submissions/submission.geojson

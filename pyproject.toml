@@ -1,26 +1,27 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deforest"
+name = "deforest2"
 version = "0.1.0"
-description = "osapiens Makeathon 2026 — deforestation detection from multimodal satellite data"
+description = "Improved LightGBM pipeline for the osapiens Makeathon 2026 deforestation challenge."
 requires-python = ">=3.10"
-readme = "README.md"
-license = { text = "MIT" }
-authors = [{ name = "osapiens Makeathon Team" }]
+dependencies = [
+    "numpy>=1.26,<2.3",
+    "pandas>=2.2,<3.0",
+    "rasterio>=1.4,<2.0",
+    "geopandas>=1.0,<2.0",
+    "shapely>=2.0,<3.0",
+    "scipy>=1.11,<2.0",
+    "lightgbm>=4.3,<5.0",
+    "PyYAML>=6.0,<7.0",
+    "click>=8.1,<9.0",
+    "tqdm>=4.66,<5.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[project.scripts]
-deforest = "deforest.cli:main"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
+[tool.setuptools.package-dir]
+"" = "src"

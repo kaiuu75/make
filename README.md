@@ -1,113 +1,116 @@
-# make — osapiens Makeathon 2026
+# make2 — improved GBM pipeline for osapiens Makeathon 2026
 
-Deforestation detection for the osapiens Makeathon 2026 challenge.
+Focused port of the LightGBM pixel-classifier from `make/` with seven targeted
+improvements to raise Union-IoU on the hidden test set and improve
+cross-region generalisation.
 
-Produces a submission‑ready `FeatureCollection` GeoJSON where every polygon is
-treated as deforestation after 2020.
+## What's inside
 
-## Quick start
+- A per-pixel LightGBM model trained on weak-label-fused targets from RADD,
+  GLAD-L and GLAD-S2 (as described in the challenge notebook
+  `makeathon26/challenge.ipynb`).
+- A minimal inference pipeline that emits a submission-ready
+  `FeatureCollection` GeoJSON in EPSG:4326 matching the format expected by
+  `makeathon26/submission_utils.py`.
+- A postprocessing tuner that grid-searches (threshold, morphology, area)
+  on a held-out region to directly optimise polygon Union IoU.
+
+## Improvements over `make/`
+
+Each item maps to a weakness identified in the `make` GBM:
+
+1. **Global stratified quota** in `scripts/train_gbm.py` replaces the old
+   per-tile caps so one dominant tile cannot drown others out. Positives are
+   additionally **confidence-stratified** across four buckets.
+2. **Richer features** in `src/deforest2/features/satellite.py` and
+   `features/aef.py`: per-year S2 stats now include p10/p90/std; all
+   available years get an AEF trajectory drift (max + year-of-max) and an
+   S2 worst-NDVI-drop (+ year-of-drop).
+3. **Cross-entropy soft targets** and an **ignore band** for ambiguous
+   label pixels. `src/deforest2/models/gbm.py` supports
+   `objective="cross_entropy"`; `src/deforest2/labels/fusion.py` now
+   returns a `hard_negative_mask` so `subsample_pixels` only sees confident
+   negatives.
+4. **Held-out validation + early stopping** — `train_gbm.py` splits tiles
+   by MGRS prefix and forwards `eval_X/eval_y` to
+   `PixelGBM.fit`; training terminates on validation log-loss plateau.
+5. **Leave-one-region-out CV** via `scripts/cv_gbm.py` (runs a training
+   fold per MGRS prefix and reports per-region polygon IoU).
+6. **Postprocessing tuning**: `scripts/tune_postprocess.py` grid-searches
+   `(threshold, morph_open_px, morph_close_px, min_area_ha)` on validation
+   tiles and writes the winning tuple to `configs/tuned_postprocess.yaml`.
+7. **Explicit class-weighting** — prevalence (`scale_pos_weight`),
+   confidence trust (`w ∝ confidence · (1 + 0.25·agreement)`, normalised to
+   unit mean per tile), and region balance are separate multiplicative
+   factors rather than tangled together in a single sample-cap.
+
+## Constraints taken from the Makeathon brief
+
+(see `makeathon26/osapiens-challenge-full-description.md` and
+`makeathon26/challenge.ipynb`)
+
+- Submission = a single GeoJSON `FeatureCollection` in EPSG:4326.
+- "Deforestation" means `forest(2020) → non-forest` **after 2020**.
+- Polygons below **0.5 ha** are filtered out.
+- Bonus: optional per-polygon `time_step` in YYMM.
+- Training uses only the provided modalities (Sentinel-1, Sentinel-2,
+  AlphaEarth embeddings) and the three weak-label sources.
+
+## Install
 
 ```bash
-# 1) install into .venv
-make install
-
-# 2) generate a synthetic tile so the pipeline can run without the S3 download
-make mock
-
-# 3) produce a zero-training consensus submission
-make baseline
-
-# 4) local metrics against the training labels (pseudo-GT = training consensus)
-make evaluate
+cd make2
+python3 -m venv .venv
+.venv/bin/pip install -U pip
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 ```
 
-The output is written to `submissions/baseline.geojson` — upload this to the
-leaderboard to verify the format round‑trips.
+## Run
 
-When the full dataset becomes available on your machine:
+Assuming the makeathon dataset is at `../makeathon26/data/makeathon-challenge/`:
 
 ```bash
-# Train the LightGBM pixel classifier on all training tiles.
-.venv/bin/python scripts/train_gbm.py --out models/gbm.txt
+# train the GBM
+python scripts/train_gbm.py --config configs/default.yaml --out models/gbm.txt
 
-# Then produce the leaderboard submission.
-.venv/bin/python scripts/build_submission.py \
-    --model gbm --gbm-model models/gbm.txt \
-    --split test --out submissions/gbm.geojson
+# tune postprocessing on the val tiles
+python scripts/tune_postprocess.py --config configs/default.yaml \
+       --gbm-model models/gbm.txt \
+       --out configs/tuned_postprocess.yaml
+
+# produce the submission
+python scripts/predict_gbm.py --config configs/default.yaml \
+       --gbm-model models/gbm.txt \
+       --postprocess configs/tuned_postprocess.yaml \
+       --split test --out submissions/submission.geojson
+
+# leave-one-region-out CV (diagnostic)
+python scripts/cv_gbm.py --config configs/default.yaml
 ```
-
-### macOS note — LightGBM needs libomp
-
-```bash
-brew install libomp
-```
-
-This is only required for Tier 1 (LightGBM training/prediction). The Tier 0
-baseline and all tests run without it.
-
-## Running on the AMD MI300X server
-
-For the Ubuntu 24.04 droplet (1×MI300X / 192 GB HBM / 240 vCPU / 5 TB scratch)
-use the dedicated config and `install-gpu` target:
-
-```bash
-make install-gpu TORCH_INDEX=https://download.pytorch.org/whl/rocm6.2
-make runtime                           # print detected hardware + autoscaled defaults
-
-# Pre-compute per-tile feature caches onto /mnt/scratch (240-way parallel).
-make preprocess    SERVER_CFG=configs/server.yaml
-
-# Train the deep ChangeUNet (bfloat16 AMP, batch_size=128 by default).
-make train-deep    SERVER_CFG=configs/server.yaml
-
-# Train LightGBM on the same features (240 CPU threads).
-make train-gbm     CONFIG=configs/server.yaml
-
-# Ensemble deep + GBM → final submission.
-make submit-ensemble SERVER_CFG=configs/server.yaml
-```
-
-All server-specific settings live in [`configs/server.yaml`](configs/server.yaml);
-see [`docs/ubuntu-mi300x.md`](docs/ubuntu-mi300x.md) for the full walk-through
-(ROCm install, scratch-disk setup, VRAM/CPU budgeting, troubleshooting).
-
-The autoscaling logic in [`src/deforest/runtime.py`](src/deforest/runtime.py)
-detects ROCm/CUDA/CPU at run time, so the same code runs on a laptop, an NVIDIA
-box, or the MI300X without any config changes — batch sizes, thread counts
-and cache paths adjust themselves to the host.
-
-## Why this approach
-
-See [`docs/approach.md`](docs/approach.md) for the strategy, the analysis of
-the ISPRS paper (Karaman et al. 2023, *BraDD‑S1TS* / U‑TAE), and the decision
-to build on top of AlphaEarth Foundations + weak‑label fusion rather than a
-pure SAR U‑TAE.
-
-Short version: the paper's U‑TAE‑on‑Sentinel‑1 design is strong but
-Brazil‑only, single‑modality, and untrained on weak labels — while the
-challenge ships global AEF embeddings, three conflicting label sources, and
-rewards polygon metrics including Year Accuracy. We treat U‑TAE as an
-optional Tier 2 date‑refiner and make AEF + LightGBM the primary model.
 
 ## Layout
 
-See [`docs/architecture.md`](docs/architecture.md).
-
-## Generalization
-
-All features are per‑pixel temporal differences on top of a globally
-pretrained embedding (AEF) — the classifier never memorises region‑specific
-reflectance statistics. Leave‑one‑region‑out validation is the recommended
-protocol for estimating Africa / Indonesia performance from the training
-tiles (mostly South America).
-
-## Submission format recap
-
-- GeoJSON FeatureCollection, `EPSG:4326`
-- Each feature is `Polygon` or `MultiPolygon`
-- Everything inside a polygon = deforestation
-- Optional `properties.time_step` = `YYMM` (e.g. `2204`) or `null`
-
-## License
-
-MIT (see `LICENSE`).
+```
+make2/
+├── README.md
+├── requirements.txt
+├── pyproject.toml
+├── configs/
+│   └── default.yaml
+├── scripts/
+│   ├── train_gbm.py
+│   ├── predict_gbm.py
+│   ├── tune_postprocess.py
+│   └── cv_gbm.py
+├── src/deforest2/
+│   ├── config.py
+│   ├── data/        (paths, readers, align, forest_mask)
+│   ├── labels/      (parsers, fusion)
+│   ├── features/    (aef, satellite)
+│   ├── models/      (gbm)
+│   ├── inference/   (tile_predict, time_step)
+│   └── postprocess/ (polygonize)
+└── tests/
+    └── test_smoke.py
+```

@@ -1,28 +1,11 @@
-# Core geospatial / numeric
-geopandas~=1.0.0
 numpy>=1.26,<2.3
-pandas~=2.2.2
-rasterio~=1.4.3
-shapely~=2.0.3
-pyproj~=3.6
-fiona~=1.10
-
-# Imagery processing
-scikit-image~=0.24
-scipy~=1.13
-
-# Classical ML (primary model)
-scikit-learn~=1.5
-lightgbm~=4.5
-
-# Config / CLI
-pyyaml~=6.0
-click~=8.1
-tqdm~=4.66
-
-# Dev / test
-pytest~=8.3
-
-# Optional — only needed for Tier 2 (U-TAE). Uncomment to enable.
-# torch~=2.4
-# torchvision~=0.19
+pandas>=2.2,<3.0
+rasterio>=1.4,<2.0
+geopandas>=1.0,<2.0
+shapely>=2.0,<3.0
+scipy>=1.11,<2.0
+lightgbm>=4.3,<5.0
+PyYAML>=6.0,<7.0
+click>=8.1,<9.0
+tqdm>=4.66,<5.0
+matplotlib>=3.8,<4.0

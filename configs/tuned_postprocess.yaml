@@ -1,0 +1,5 @@
+postprocess:
+  threshold: 0.5
+  morph_open_px: 0
+  morph_close_px: 9
+  min_area_ha: 0.5
